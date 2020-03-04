@@ -39,7 +39,17 @@ create type todoapp_public.task_status as enum (
 create table todoapp_public.task (
   id serial primary key,
   user_id integer not null references todoapp_public.user(id),
-  name text not null check (char_length(name) < 200),
+  description text not null check (char_length(name) < 200),
   status todoapp_public.task_status,
   created_at timestamp default now()
 );
+
+comment on table todoapp_public.task is 'A users task table';
+comment on column todoapp_public.task.id is 'The id of task';
+comment on column todoapp_public.task.user_id is 'The id of user who created this task';
+comment on column todoapp_public.task.description is 'The task description';
+comment on column todoapp_public.task.status is 'The task status';
+comment on column todoapp_public.task.created_at is 'The time this task was created.';
+
+alter default privileges revoke execute on functions from public;
+

@@ -18,7 +18,8 @@ app.use(
   postgraphile(postgresConfig, process.env.POSTGRAPHILE_SCHEMA, {
     watchPg: true,
     graphiql: true,
-    enhanceGraphiql: true
+    enhanceGraphiql: true,
+    pgSettings: req => ({ 'jwt.claims.user_id': req.user ? req.user.id : undefined })
   })
 );
 

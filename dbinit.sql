@@ -1,9 +1,10 @@
 drop database if exists todo;
-drop schema if exists todoapp_public cascade;
-drop schema if exists todoapp_private cascade;
+
 
 create database todo;
 \connect todo;
+drop schema if exists todoapp_public cascade;
+drop schema if exists todoapp_private cascade;
 create schema todoapp_public;
 create schema todoapp_private;
 
@@ -39,7 +40,7 @@ create type todoapp_public.task_status as enum (
 create table todoapp_public.task (
   id serial primary key,
   user_id integer not null references todoapp_public.user(id),
-  description text not null check (char_length(name) < 200),
+  description text not null check (char_length(description) < 200),
   status todoapp_public.task_status,
   created_at timestamp default now()
 );
@@ -53,3 +54,16 @@ comment on column todoapp_public.task.created_at is 'The time this task was crea
 
 alter default privileges revoke execute on functions from public;
 
+create function todoapp_public.users_all_tasks(curr_user todoapp_public.user) returns setof todoapp_public.task as $$
+  select task.*
+  from todoapp_public.task as task
+  where task.user_id = curr_user.id
+  order by created_at desc
+ $$ language sql stable;
+
+comment on function todoapp_public.users_all_tasks(todoapp_public.user) is 'Get all users tasks.';
+
+
+CREATE FUNCTION add(a int, b int) RETURNS int AS $$
+  select a + b;
+$$ LANGUAGE sql IMMUTABLE STRICT;

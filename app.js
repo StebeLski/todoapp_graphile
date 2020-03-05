@@ -19,7 +19,8 @@ app.use(
     watchPg: true,
     graphiql: true,
     enhanceGraphiql: true,
-    pgSettings: req => ({ 'jwt.claims.user_id': req.user ? req.user.id : undefined })
+    pgDefaultRole: process.env.POSTGRAPHILE_DEFAULT_ROLE
+    // pgSettings: req => ({ 'jwt.claims.user_id': req.user ? req.user.id : undefined })
   })
 );
 

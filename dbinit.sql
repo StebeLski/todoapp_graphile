@@ -14,6 +14,12 @@ create table todoapp_public.user (
   created_at timestamp default now()
 );
 
+CREATE ROLE auth_postgraphile LOGIN PASSWORD 'password';
+CREATE ROLE auth_anonymous;
+GRANT auth_anonymous TO auth_postgraphile;
+CREATE ROLE auth_authenticated;
+GRANT auth_authenticated TO auth_postgraphile;
+
 comment on table todoapp_public.user is 'A user.';
 comment on column todoapp_public.user.id is 'The primary unique identifier for the user.';
 comment on column todoapp_public.user.name is 'The user’s name.';
@@ -54,16 +60,39 @@ comment on column todoapp_public.task.created_at is 'The time this task was crea
 
 alter default privileges revoke execute on functions from public;
 
-create function todoapp_public.users_all_tasks(curr_user todoapp_public.user) returns setof todoapp_public.task as $$
-  select task.*
-  from todoapp_public.task as task
-  where task.user_id = curr_user.id
-  order by created_at desc
- $$ language sql stable;
+alter table todoapp_public.task add column updated_at timestamp default now();
 
-comment on function todoapp_public.users_all_tasks(todoapp_public.user) is 'Get all users tasks.';
+create function todoapp_public.set_updated_at() returns trigger as $$
+begin
+  new.updated_at := current_timestamp;
+  return new;
+end;
+$$ language plpgsql;
 
+create trigger task_updated_at before update
+  on todoapp_public.task
+  for each row
+  execute procedure todoapp_public.set_updated_at();
 
-CREATE FUNCTION add(a int, b int) RETURNS int AS $$
-  select a + b;
-$$ LANGUAGE sql IMMUTABLE STRICT;
+create extension if not exists "pgcrypto";
+
+create function todoapp_public.register_user(
+  name text,
+  email text, 
+  password text,
+) returns todoapp_public.user as $$ 
+  declare
+    user todoapp_public.user;
+  begin
+    insert into todoapp_public.user (name) values
+      (name)  
+      returning * into user;
+
+    insert into todoapp_private.user_account (user_id, email, password_hash) values
+      (user.id, email, crypt(password, gen_salt('bf')));
+
+    return user;
+  end;
+$$ language plpgsql strict security definer;
+
+comment on function todoapp_public.register_user(text, text, text) is 'Registers a single user and creates an account in todo APP';

@@ -96,3 +96,46 @@ create function todoapp_public.register_user(
 $$ language plpgsql strict security definer;
 
 comment on function todoapp_public.register_user(text, text, text) is 'Registers a single user and creates an account in todo APP';
+
+create function todoapp_public.authenticate(
+  email text,
+  password text
+) returns todoapp_public.jwt_token as $$
+  declare
+  account todoapp_private.user_account
+  begin
+    SELECT a.* INTO account 
+    FROM todoapp_private.user_account as a 
+    WHERE a.email = $1;
+  if account.password_hash = crypt(password, account.password_hash) then 
+    return ('auth_authenticated', account.user_id)::auth_public.jwt_token; 
+  else 
+    return null; 
+  end if; 
+  end;
+$$ language plpgsql strict security definer;
+
+comment on function forum_example.authenticate(text, text) is 'Creates a JWT token that will securely identify a user and give them certain permissions.';
+
+create function todoapp_public.current_user() returns todoapp_public.user as $$
+  select *
+  from todoapp_public.user
+  where id = current_setting('jwt.claims.user_id', true)::integer
+$$ language sql stable;
+
+comment on function forum_example.current_user() is 'Gets the person who was identified by our JWT.';
+
+
+
+grant usage on schema todoapp_public to auth_anonymous, auth_authenticated;
+
+grant select on table todoapp_public.user to auth_anonymous, auth_authenticated;
+grant update, delete on table todoapp_public.user to auth_authenticated;
+
+grant select on table todoapp_public.task to auth_anonymous, auth_authenticated;
+grant insert, update, delete on table todoapp_public.task to auth_authenticated;
+grant usage on sequence todoapp_public.task_id_seq to auth_authenticated;
+
+grant execute on function todoapp_public.authenticate(text, text) to auth_anonymous, auth_authenticated;
+grant execute on function todoapp_public.current_user() to auth_anonymous, auth_authenticated;
+grant execute on function todoapp_public.register_user(text, text, text, text) to auth_anonymous;

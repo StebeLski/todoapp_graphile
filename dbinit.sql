@@ -14,6 +14,12 @@ create table todoapp_public.user (
   created_at timestamp default now()
 );
 
+CREATE ROLE auth_postgraphile LOGIN PASSWORD 'password';
+CREATE ROLE auth_anonymous;
+GRANT auth_anonymous TO auth_postgraphile;
+CREATE ROLE auth_authenticated;
+GRANT auth_authenticated TO auth_postgraphile;
+
 comment on table todoapp_public.user is 'A user.';
 comment on column todoapp_public.user.id is 'The primary unique identifier for the user.';
 comment on column todoapp_public.user.name is 'The user’s name.';
@@ -37,11 +43,16 @@ create type todoapp_public.task_status as enum (
   'done'
 );
 
+create type todoapp_public.jwt_token as (
+  role text,
+  user_id integer
+);
+
 create table todoapp_public.task (
   id serial primary key,
   user_id integer not null references todoapp_public.user(id),
   description text not null check (char_length(description) < 200),
-  status todoapp_public.task_status,
+  status todoapp_public.task_status default 'todo'::todoapp_public.task_status,
   created_at timestamp default now()
 );
 
@@ -54,16 +65,112 @@ comment on column todoapp_public.task.created_at is 'The time this task was crea
 
 alter default privileges revoke execute on functions from public;
 
-create function todoapp_public.users_all_tasks(curr_user todoapp_public.user) returns setof todoapp_public.task as $$
-  select task.*
-  from todoapp_public.task as task
-  where task.user_id = curr_user.id
-  order by created_at desc
- $$ language sql stable;
+alter table todoapp_public.task add column updated_at timestamp default now();
 
-comment on function todoapp_public.users_all_tasks(todoapp_public.user) is 'Get all users tasks.';
+create function todoapp_public.set_updated_at() returns trigger as $$
+begin
+  new.updated_at := current_timestamp;
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger task_updated_at before update
+  on todoapp_public.task
+  for each row
+  execute procedure todoapp_public.set_updated_at();
+
+create function todoapp_public.current_user_id() returns integer as $$
+  select current_setting('jwt.claims.user_id', true)::integer
+$$ language sql stable;
+
+alter table todoapp_public.user enable row level security;
+alter table todoapp_public.task enable row level security;
+
+create policy select_user on todoapp_public.user for select
+  using (true);
+create policy select_task on todoapp_public.task for select
+  using (true);
+
+create policy select_task_own on todoapp_public.task for select using (user_id=todoapp_public.current_user_id());
+create policy update_task on todoapp_public.task for update using (user_id=todoapp_public.current_user_id());
+create policy insert_task on todoapp_public.task for insert with check (user_id=todoapp_public.current_user_id());
+create policy delete_task on todoapp_public.task for delete using (user_id=todoapp_public.current_user_id());
+
+create extension if not exists "pgcrypto";
+
+create function todoapp_public.register_user(
+  name text,
+  email text, 
+  password text
+) returns todoapp_public.user as $$ 
+  declare
+    new_user todoapp_public.user;
+  begin
+    insert into todoapp_public.user (name) values
+      (name)  
+      returning * into new_user;
+
+    insert into todoapp_private.user_account (user_id, email, password_hash) values
+      (new_user.id, email, crypt(password, gen_salt('bf')));
+
+    return new_user;
+  end;
+$$ language plpgsql strict security definer;
+
+comment on function todoapp_public.register_user(text, text, text) is 'Registers a single user and creates an account in todo APP';
 
 
-CREATE FUNCTION add(a int, b int) RETURNS int AS $$
-  select a + b;
-$$ LANGUAGE sql IMMUTABLE STRICT;
+
+create function todoapp_public.authenticate(
+  email text,
+  password text
+) returns todoapp_public.jwt_token as $$
+  declare
+  account todoapp_private.user_account;
+  begin
+    SELECT a.* INTO account 
+    FROM todoapp_private.user_account as a 
+    WHERE a.email = $1;
+  if account.password_hash = crypt(password, account.password_hash) then 
+    return ('auth_authenticated', account.user_id)::todoapp_public.jwt_token; 
+  else 
+    return null; 
+  end if; 
+  end;
+$$ language plpgsql strict security definer;
+
+comment on function todoapp_public.authenticate(text, text) is 'Creates a JWT token that will securely identify a user and give them certain permissions.';
+
+create function todoapp_public.current_user() returns todoapp_public.user as $$
+  select *
+  from todoapp_public.user
+  where id = todoapp_public.current_user_id()
+$$ language sql stable;
+
+comment on function todoapp_public.current_user() is 'Gets the person who was identified by our JWT.';
+
+create function todoapp_public.createtask(description text) returns todoapp_public.task as $$
+declare
+new_task todoapp_public.task;
+begin
+  insert into todoapp_public.task (user_id, description) 
+  values (todoapp_public.current_user_id(), description)
+  returning * into new_task;
+  return new_task;
+end;
+$$ language plpgsql strict security definer;
+
+grant usage on schema todoapp_public to auth_anonymous, auth_authenticated;
+
+grant select on table todoapp_public.user to auth_anonymous, auth_authenticated;
+grant update, delete on table todoapp_public.user to auth_authenticated;
+
+grant select on table todoapp_public.task to auth_anonymous, auth_authenticated;
+grant insert, update, delete on table todoapp_public.task to auth_authenticated;
+grant usage on sequence todoapp_public.task_id_seq to auth_authenticated;
+
+grant execute on function todoapp_public.authenticate(text, text) to auth_anonymous, auth_authenticated;
+grant execute on function todoapp_public.current_user() to auth_anonymous, auth_authenticated;
+grant execute on function todoapp_public.register_user(text, text, text) to auth_anonymous;
+grant execute on function todoapp_public.current_user_id() to auth_authenticated;
+grant execute on function todoapp_public.createtask(text) to auth_authenticated;

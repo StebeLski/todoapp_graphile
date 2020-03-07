@@ -149,11 +149,15 @@ $$ language sql stable;
 
 comment on function todoapp_public.current_user() is 'Gets the person who was identified by our JWT.';
 
-create function todoapp_public.createtask(description text) returns todoapp_public.task as $$ 
-  begin
+create function todoapp_public.createtask(description text) returns todoapp_public.task as $$
+declare
+new_task todoapp_public.task;
+begin
   insert into todoapp_public.task (user_id, description) 
-  values (todoapp_public.current_user_id(), description);
-  end;
+  values (todoapp_public.current_user_id(), description)
+  returning * into new_task;
+  return new_task;
+end;
 $$ language plpgsql strict security definer;
 
 grant usage on schema todoapp_public to auth_anonymous, auth_authenticated;
@@ -169,4 +173,4 @@ grant execute on function todoapp_public.authenticate(text, text) to auth_anonym
 grant execute on function todoapp_public.current_user() to auth_anonymous, auth_authenticated;
 grant execute on function todoapp_public.register_user(text, text, text) to auth_anonymous;
 grant execute on function todoapp_public.current_user_id() to auth_authenticated;
-grant execute on function todoapp_public.createtask() to auth_authenticated;
+grant execute on function todoapp_public.createtask(text) to auth_authenticated;
